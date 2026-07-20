@@ -1,3 +1,14 @@
+# 元のリポジトリとの差分
+
+uv環境で動くように設定し直した。
+```bash
+uv sync
+```
+とすれば、動くようになっているはず。
+
+---
+
+
 # On Conformal Isometry of Grid Cells: Learning Distance-Preserving Position Embedding
 This repo contains the official implementation for the paper [On Conformal Isometry of Grid Cells: Learning Distance-Preserving Position Embedding](https://arxiv.org/abs/2405.16865), which is published in ICLR 2025 (Oral Presentation 1.8%). 
 
