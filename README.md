@@ -1,74 +1,66 @@
-# 元のリポジトリとの差分
+# Grid-cell conformal isometry
 
-uv環境で動くように設定し直した。
+[日本語版 README](README_ja.md)
+
+This repository is based on the official implementation of
+[On Conformal Isometry of Grid Cells: Learning Distance-Preserving Position Embedding](https://arxiv.org/abs/2405.16865).
+
+The current implementation focuses on one training condition that reliably
+learns hexagonal grid-cell activity:
+
+- a continuous SIREN position encoder with non-negative Softplus output;
+- a direction-conditioned MLP that generates the transformation matrix from
+  `[cos(theta), sin(theta)]`;
+- one random movement direction per sample;
+- a fixed isometry displacement of `dr = 5`;
+- a squared-distance isometry loss;
+- a loss-based activity norm constraint.
+
+Legacy table encoders, ordinary MLP encoders, angle bins, variable-distance
+isometry losses, and multi-direction experiment branches have been removed so
+that the training path is explicit in the code.
+
+## Setup
+
+Python 3.12 is supported. Install dependencies with:
+
 ```bash
 uv sync
 ```
-とすれば、動くようになっているはず。
 
-学習指標は各実行ディレクトリの `metrics.csv`、モデルとoptimizerの状態は
-`ckpt/checkpoint-step*.pth` に保存される。設定とNumPy乱数状態は、同じ名前の
-`checkpoint-step*.json` に保存される。チェックポイントはデフォルトで
-500ステップごとに作成される。`.pth` は `torch.load(..., weights_only=True)`
-で読み込める形式になっている。
+## Training
 
-学習後の可視化は以下のコマンドで生成できる（`RUN_DIR` は実際の実行ディレクトリに置き換える）。
+Run the supported configuration with:
+
+```bash
+uv run python main.py \
+  --config=configs/siren_scale10.py \
+  --workdir=./logs
+```
+
+Each invocation creates a timestamped run directory under `logs`. Training
+metrics are written to `metrics.csv`. PyTorch checkpoints are written every
+500 steps to `ckpt/checkpoint-step*.pth`; their configuration and NumPy random
+state are stored in the matching JSON files. The `.pth` files can be loaded
+with `torch.load(..., weights_only=True)`.
+
+## Visualization
+
+After training, replace `RUN_DIR` with the timestamped run directory:
+
 ```bash
 uv run python visualize_results.py RUN_DIR
 ```
 
-特定のチェックポイントを可視化する場合は `--step 5000` のように指定する。
-Lossは `losses.png`、`num_act` と `num_async` は
-`activity_metrics.png` に分けて出力される。
-この実験ブランチでは活動テーブルを更新後に直接L2正規化せず、各ステップで
-サンプリングされた位置のモジュールノルム誤差を `loss_norm` として最適化する。
-ノルムの平均と標準偏差は
-`metrics.csv` と `module_norms.png` に出力される。
+To visualize a specific checkpoint, append `--step 5000`. The script writes
+the receptive fields, generated direction-dependent matrices, losses, activity
+diagnostics, and module-norm diagnostics below `RUN_DIR/visualizations`.
 
-角度binを使わず、`[cos(theta), sin(theta)]` から移動行列 `B(theta)` を
-MLPで生成する線形モデルは以下で実行できる。
+Measure hexagonal and square gridness with:
+
 ```bash
-uv run python main.py --config=configs/linear_mlp_scale10.py
+uv run python analyze_gridness.py RUN_DIR
 ```
 
----
-
-
-# On Conformal Isometry of Grid Cells: Learning Distance-Preserving Position Embedding
-This repo contains the official implementation for the paper [On Conformal Isometry of Grid Cells: Learning Distance-Preserving Position Embedding](https://arxiv.org/abs/2405.16865), which is published in ICLR 2025 (Oral Presentation 1.8%). 
-
-Authors: [Dehong Xu](https://dehongxu.github.io/), [Ruiqi Gao](https://ruiqigao.github.io/), [Wen-Hao Zhang](https://profiles.utsouthwestern.edu/profile/210799/wenhao-zhang.html), [Xue-Xin Wei](https://sites.google.com/view/xxweineuraltheory/research), [Ying Nian Wu](http://www.stat.ucla.edu/~ywu/research.html)
-
---------------------
-
-This paper explores the conformal isometry hypothesis as an explanation for the hexagonal periodic patterns observed in grid cell response maps. We show that by learning a maximally distance-preserving position embedding, this hypothesis naturally yields the hexagonal grid firing patterns.
-<div align="center">
-  <img src="assets/linear_scales.png" alt="drawing" width="400"/>
-  <img src="assets/linear_torus.png" alt="drawing" width="400"/>
-</div>
-
-## Requirements
-Requires Python 3.12. To install dependencies:
-```angular2
-pip install -r requirements.txt
-```
-
-## Usage
-- To train the linear model with scaling factor $s=10$, run:
-
-```angular2
-python main.py --config=configs/linear_scale10.py
-```
-
-- To train the nonlinear model with ReLU activation, run:
-
-```angular2
-python main.py --config=configs/nonlinear1_relu.py
-```
-
-- To train the nonlinear model(additive version), run:
-
-```angular2
-python main.py --config=configs/nonlinear2_additive.py
-```
-In `configs` folder, we also provide the configurations for training linear models with different scales, and nonlinear model with different activation functions. 
+The CSV scores and spatial-autocorrelation plots are written below
+`RUN_DIR/gridness`.
