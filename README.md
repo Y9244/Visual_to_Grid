@@ -31,6 +31,30 @@ MLPで生成する線形モデルは以下で実行できる。
 uv run python main.py --config=configs/linear_mlp_scale10.py
 ```
 
+位置エンコーダをSIREN（正弦中間層＋Softplus出力）に置き換える実験は
+以下で実行できる。
+```bash
+uv run python main.py --config=configs/linear_siren_scale10.py
+```
+
+論文の理論式に合わせ、固定距離の12方向について距離二乗の偏差を学習する
+SIREN実験は以下で実行できる。
+```bash
+uv run python main.py --config=configs/linear_siren_theoretical_scale10.py
+```
+
+距離二乗の偏差だけを残し、従来どおりランダム距離・ランダム1方向で学習する
+アブレーションは以下で実行できる。
+```bash
+uv run python main.py --config=configs/linear_siren_squared_distance_scale10.py
+```
+
+距離を5に固定し、各位置でランダム1方向だけを使う距離二乗Lossの
+アブレーションは以下で実行できる。
+```bash
+uv run python main.py --config=configs/linear_siren_fixed_single_scale10.py
+```
+
 ---
 
 

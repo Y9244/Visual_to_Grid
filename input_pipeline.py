@@ -7,6 +7,7 @@ class TrainDataset:
   def __init__(self, config: ml_collections.ConfigDict, model_config: ml_collections.ConfigDict):
     self.config = config # config.data
     self.num_grid = model_config.num_grid # 40
+    self.isometry_loss_type = model_config.isometry_loss_type
 
     self.num_blocks = model_config.num_neurons // model_config.module_size # 1
     self.scale_vector = (
@@ -56,24 +57,61 @@ class TrainDataset:
     batch_size = self.config.batch_size
     config = self.config
 
-    theta = np.random.random(size=(batch_size, 2)).astype(np.float32)
-    theta *= np.float32(2 * np.pi)
-    dr = np.sqrt(
-        np.random.random(size=(batch_size, 1)).astype(np.float32))
-    dr *= np.float32(config.max_dr_isometry)
-    dx = _dr_theta_to_dx(dr, theta)  # [N, 2, 2]
+    sampling_type = getattr(
+        config, 'isometry_sampling_type', 'random_single')
+    if sampling_type in ('random_single', 'fixed_single'):
+      theta = np.random.random(size=(batch_size, 2)).astype(np.float32)
+      theta *= np.float32(2 * np.pi)
+      if sampling_type == 'fixed_single':
+        dr = np.full(
+            (batch_size, 1), config.max_dr_isometry, dtype=np.float32)
+      else:
+        dr = np.sqrt(
+            np.random.random(size=(batch_size, 1)).astype(np.float32))
+        dr *= np.float32(config.max_dr_isometry)
+      dx = _dr_theta_to_dx(dr, theta)
+      x_max = np.fmin(
+          self.num_grid - 0.5,
+          np.min(self.num_grid - 0.5 - dx, axis=1))
+      x_min = np.fmax(-0.5, np.max(-0.5 - dx, axis=1))
+      x = np.random.random(size=(batch_size, 2)).astype(np.float32)
+      x = x * (x_max - x_min) + x_min
+      return {
+          'x': x.astype(np.float32),
+          'x_plus_dx1': (x + dx[:, 0]).astype(np.float32),
+          'x_plus_dx2': (x + dx[:, 1]).astype(np.float32),
+      }
+
+    if sampling_type != 'fixed_multi':
+      raise ValueError(
+          f'Unknown isometry_sampling_type: {sampling_type}')
+
+    num_directions = getattr(config, 'num_isometry_directions', 12)
+    theta_offset = np.random.random(
+        size=(batch_size, 1)).astype(np.float32)
+    theta_offset *= np.float32(2 * np.pi / num_directions)
+    theta = np.arange(num_directions, dtype=np.float32)[None, :]
+    theta *= np.float32(2 * np.pi / num_directions)
+    theta = theta_offset + theta
+
+    if getattr(config, 'fixed_dr_isometry', True):
+      dr = np.full(
+          (batch_size, 1), config.max_dr_isometry, dtype=np.float32)
+    else:
+      dr = np.sqrt(
+          np.random.random(size=(batch_size, 1)).astype(np.float32))
+      dr *= np.float32(config.max_dr_isometry)
+    dx = _dr_theta_to_dx(dr, theta)  # [N, num_directions, 2]
 
     x_max = np.fmin(self.num_grid - 0.5, np.min(self.num_grid - 0.5 - dx, axis=1))
     x_min = np.fmax(-0.5, np.max(-0.5 - dx, axis=1))
     x = np.random.random(size=(batch_size, 2)).astype(np.float32)
     x = x * (x_max - x_min) + x_min
-    x_plus_dx1 = x + dx[:, 0]
-    x_plus_dx2 = x + dx[:, 1]
+    x_plus_dx = x[:, None, :] + dx
 
     return {
         'x': x.astype(np.float32),
-        'x_plus_dx1': x_plus_dx1.astype(np.float32),
-        'x_plus_dx2': x_plus_dx2.astype(np.float32),
+        'x_plus_dx': x_plus_dx.astype(np.float32),
     }
 
 

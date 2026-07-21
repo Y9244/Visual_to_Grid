@@ -82,8 +82,22 @@ def plot_metrics(metrics_path, output_dir):
   fig.savefig(output_dir / 'module_norms.png', dpi=160)
   plt.close(fig)
 
+  if 'isometry_direction_variance' in metrics:
+    fig, axis = plt.subplots(figsize=(7, 4.5))
+    axis.plot(
+        metrics['step'], metrics['isometry_direction_variance'],
+        label='isometry_direction_variance')
+    axis.set(
+        xlabel='step', ylabel='variance',
+        title='Directional variance of squared-distance deviation')
+    axis.legend()
+    axis.grid(alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(output_dir / 'isometry_direction_variance.png', dpi=160)
+    plt.close(fig)
 
-def plot_activity_table(activity, output_path):
+
+def plot_encoder_activity(activity, output_path, encoder_type):
   num_neurons = activity.shape[0]
   num_cols = min(8, num_neurons)
   num_rows = math.ceil(num_neurons / num_cols)
@@ -96,10 +110,35 @@ def plot_activity_table(activity, output_path):
       image = axis.imshow(activity[index], cmap='jet', interpolation='nearest')
       axis.set_title(f'neuron {index}', fontsize=9)
       fig.colorbar(image, ax=axis, fraction=0.046, pad=0.04)
-  fig.suptitle('Grid-cell activity table (encoder.v)')
+  fig.suptitle(f'Grid-cell activity ({encoder_type} encoder)')
   fig.tight_layout()
   fig.savefig(output_path, dpi=160)
   plt.close(fig)
+
+
+def reconstruct_encoder_activity(checkpoint_path, state_dict):
+  """Return an activity map for either the table or SIREN encoder."""
+  metadata_path = checkpoint_path.with_suffix('.json')
+  with metadata_path.open() as metadata_file:
+    metadata = json.load(metadata_file)
+  model_config = model.GridCellConfig(**metadata['config']['model'])
+
+  if model_config.encoder_type == 'table':
+    return state_dict['encoder.v'].detach().cpu().numpy(), 'table'
+
+  grid_cell = model.GridCell(model_config)
+  grid_cell.load_state_dict(state_dict)
+  grid_cell.eval()
+  resolution = 100
+  coordinate = torch.linspace(0, model_config.num_grid - 1, resolution)
+  x, y = torch.meshgrid(coordinate, coordinate, indexing='xy')
+  positions = torch.stack((x.reshape(-1), y.reshape(-1)), dim=-1)
+  with torch.no_grad():
+    activity = grid_cell.encoder(positions)
+  activity = activity.reshape(
+      resolution, resolution, model_config.num_neurons)
+  activity = activity.permute(2, 0, 1).numpy()
+  return activity, model_config.encoder_type
 
 
 def plot_matrix_parameter(value, name, output_dir):
@@ -190,14 +229,16 @@ def main():
 
   plot_metrics(run_dir / 'metrics.csv', output_dir)
   state_dict = checkpoint['state_dict']
-  activity = state_dict['encoder.v'].detach().cpu().numpy()
-  plot_activity_table(activity, output_dir / 'encoder_v.png')
+  activity, encoder_type = reconstruct_encoder_activity(
+      checkpoint_path, state_dict)
+  plot_encoder_activity(
+      activity, output_dir / 'encoder_activity.png', encoder_type)
 
   generated_matrices_plotted = plot_generated_direction_matrices(
       checkpoint_path, state_dict, output_dir)
 
   for name, tensor in state_dict.items():
-    if name == 'encoder.v':
+    if name == 'encoder.v' or name.startswith('encoder.'):
       continue
     if generated_matrices_plotted and name.startswith('trans.B_mlp.'):
       continue

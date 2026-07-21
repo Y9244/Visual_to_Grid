@@ -48,6 +48,7 @@ class Experiment:
     metric_names = [
         'loss', 'loss_trans', 'loss_isometry', 'loss_norm',
         'num_act', 'num_async', 'module_norm_mean', 'module_norm_std',
+        'isometry_direction_variance',
     ]
     start_time = time.monotonic()
 
@@ -79,7 +80,7 @@ class Experiment:
         self.optimizer.step()
 
         # Assumption 4. Non-negativity
-        if config.positive_v:
+        if config.positive_v and hasattr(self.model.encoder, 'v'):
           with torch.no_grad():
             self.model.encoder.v.clamp_(min=0.)
   
