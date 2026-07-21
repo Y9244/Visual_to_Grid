@@ -1,12 +1,12 @@
 """ Main training loop. """
+import csv
+import json
 import os
+import time
 
 from absl import logging
-from clu import metric_writers
-from clu import periodic_actions
 import ml_collections
 import numpy as np
-import tensorflow as tf
 import torch
 import torch.nn as nn
 
@@ -38,25 +38,26 @@ class Experiment:
   def train_and_evaluate(self, workdir):
     logging.info('==== Experiment.train_and_evaluate() ===')
 
-    if not tf.io.gfile.exists(workdir):
-      tf.io.gfile.mkdir(workdir)
+    os.makedirs(workdir, exist_ok=True)
     config = self.config.train
     logging.info('num_steps_train=%d', config.num_steps_train)
-
-    writer = metric_writers.create_default_writer(workdir)
-
-    hooks = []
-    report_progress = periodic_actions.ReportProgress(
-        num_train_steps=config.num_steps_train, writer=writer)
-    hooks += [report_progress]
 
     train_metrics = []
     module_size = self.model_config.module_size
     num_grid = self.model_config.num_grid
     num_module = self.model_config.num_neurons // module_size
+    ckpt_dir = os.path.join(workdir, 'ckpt')
+    os.makedirs(ckpt_dir, exist_ok=True)
+    metrics_path = os.path.join(workdir, 'metrics.csv')
+    metric_names = ['loss', 'loss_trans', 'loss_isometry', 'num_act', 'num_async']
+    start_time = time.monotonic()
 
     logging.info('==== Start of training ====')
-    with metric_writers.ensure_flushes(writer):
+    with open(metrics_path, 'w', newline='') as metrics_file:
+      csv_writer = csv.DictWriter(
+          metrics_file, fieldnames=['step', *metric_names])
+      csv_writer.writeheader()
+
       for step in range(1, config.num_steps_train+1):
         batch_data = utils.dict_to_device(next(self.train_iter), self.device)
 
@@ -75,7 +76,7 @@ class Experiment:
         self.optimizer.zero_grad()
         loss, metrics_step = self.model(batch_data, step) # モデルのメイン部分
         loss.backward()
-        torch.nn.utils.clip_grad_norm(parameters=self.model.parameters(), max_norm=10)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10)
         self.optimizer.step()
 
         # Assumption 4. Non-negativity
@@ -98,31 +99,29 @@ class Experiment:
         # Quick indication that training is happening.
         logging.log_first_n(
             logging.WARNING, 'Finished training step %d.', 3, step)
-        for h in hooks:
-          h(step)
 
-        if step % config.steps_per_logging == 0 or step == 1:
+        if (step % config.steps_per_logging == 0 or
+            step == config.num_steps_train):
           train_metrics = utils.average_appended_metrics(train_metrics)
-          writer.write_scalars(step, train_metrics)
+          row = {'step': step}
+          row.update({name: float(train_metrics[name]) for name in metric_names})
+          csv_writer.writerow(row)
+          metrics_file.flush()
+          logging.info(
+              'step=%d/%d loss=%.6f loss_trans=%.6f loss_isometry=%.6f',
+              step, config.num_steps_train, row['loss'], row['loss_trans'],
+              row['loss_isometry'])
           train_metrics = []
 
         if step % config.steps_per_large_logging == 0:
-          # visualize v and heatmaps.
-          with torch.no_grad():
-            def visualize(weights, name):
-              weights = weights.data.cpu().detach().numpy()
-              weights = weights.reshape((-1, module_size, num_grid, num_grid))[:10, :10] # -> [1, 10, 40, 40]
-              writer.write_images(step, {name: utils.draw_heatmap(weights)})
-
-            # self.model.encoder.v: [24, 40, 40]
-            visualize(self.model.encoder.v, 'v') # エラー箇所
-
-        if step == config.num_steps_train:
-          ckpt_dir = os.path.join(workdir, 'ckpt')
-          if not tf.io.gfile.exists(ckpt_dir):
-            tf.io.gfile.makedirs(ckpt_dir)
           self._save_checkpoint(step, ckpt_dir)
-          
+
+      if config.num_steps_train % config.steps_per_large_logging != 0:
+        self._save_checkpoint(config.num_steps_train, ckpt_dir)
+
+    logging.info('Training finished in %.1f seconds. Metrics: %s',
+                 time.monotonic() - start_time, metrics_path)
+
   def _save_checkpoint(self, step, ckpt_dir):
     """
     Saving checkpoints
@@ -136,10 +135,24 @@ class Experiment:
         'step': step,
         'state_dict': self.model.state_dict(),
         'optimizer': self.optimizer.state_dict(),
-        'config': self.config
+        'torch_rng_state': torch.get_rng_state(),
     }
     filename = os.path.join(ckpt_dir, 'checkpoint-step{}.pth'.format(step))
     torch.save(state, filename)
+    numpy_rng_state = np.random.get_state()
+    metadata = {
+        'config': self.config.to_dict(),
+        'numpy_rng_state': {
+            'bit_generator': numpy_rng_state[0],
+            'state': numpy_rng_state[1].tolist(),
+            'position': numpy_rng_state[2],
+            'has_gauss': numpy_rng_state[3],
+            'cached_gaussian': numpy_rng_state[4],
+        },
+    }
+    metadata_filename = os.path.splitext(filename)[0] + '.json'
+    with open(metadata_filename, 'w') as metadata_file:
+      json.dump(metadata, metadata_file, indent=2)
     logging.info("Saving checkpoint: {} ...".format(filename))
 
   def _resume_checkpoint(self, resume_path):
@@ -148,22 +161,25 @@ class Experiment:
     :param resume_path: Checkpoint path to be resumed
     """
     resume_path = str(resume_path)
-    self.logger.info("Loading checkpoint: {} ...".format(resume_path))
-    checkpoint = torch.load(resume_path, map_location=self.device)
-    self.start_epoch = checkpoint['epoch'] + 1
+    logging.info('Loading checkpoint: %s ...', resume_path)
+    checkpoint = torch.load(
+        resume_path, map_location=self.device, weights_only=True)
+    metadata_path = os.path.splitext(resume_path)[0] + '.json'
+    with open(metadata_path) as metadata_file:
+      metadata = json.load(metadata_file)
 
-    # load architecture params from checkpoint.
-    if checkpoint['config']['arch'] != self.config['arch']:
-      self.logger.warning("Warning: Architecture configuration given in config file is different from that of "
-                          "checkpoint. This may yield an exception while state_dict is being loaded.")
+    self.start_step = checkpoint['step'] + 1
     self.model.load_state_dict(checkpoint['state_dict'])
+    self.optimizer.load_state_dict(checkpoint['optimizer'])
+    torch.set_rng_state(checkpoint['torch_rng_state'].cpu())
 
-    # load optimizer state from checkpoint only when optimizer type is not changed.
-    if checkpoint['config']['optimizer']['type'] != self.config['optimizer']['type']:
-      self.logger.warning("Warning: Optimizer type given in config file is different from that of checkpoint. "
-                          "Optimizer parameters not being resumed.")
-    else:
-      self.optimizer.load_state_dict(checkpoint['optimizer'])
-
-    self.logger.info(
-        "Checkpoint loaded. Resume training from epoch {}".format(self.start_epoch))
+    numpy_rng_state = metadata['numpy_rng_state']
+    np.random.set_state((
+        numpy_rng_state['bit_generator'],
+        np.asarray(numpy_rng_state['state'], dtype=np.uint32),
+        numpy_rng_state['position'],
+        numpy_rng_state['has_gauss'],
+        numpy_rng_state['cached_gaussian'],
+    ))
+    logging.info('Checkpoint loaded. Resume training from step %d',
+                 self.start_step)

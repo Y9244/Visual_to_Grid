@@ -5,7 +5,6 @@ from absl import app
 from absl import flags
 from ml_collections import config_flags
 import numpy as np
-import tensorflow as tf
 
 import experiment
 import utils
@@ -29,8 +28,7 @@ def main(argv):
     workdir = os.path.join(FLAGS.workdir, utils.get_workdir())
   else:
     workdir = os.path.join(FLAGS.workdir, "eval")
-  if not tf.io.gfile.exists(workdir):
-    tf.io.gfile.makedirs(workdir)
+  os.makedirs(workdir, exist_ok=True)
 
   # record config file
   with open(os.path.join(workdir, "config.txt"), 'a') as f:

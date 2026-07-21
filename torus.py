@@ -25,7 +25,11 @@ from sklearn.manifold import SpectralEmbedding
 # ckpt = torch.load('../logs/09_nonlinear_24mod_polar/20231026-213556-005-batch_size=4000-learnable_s=False-num_theta=24-0-4-5-positive_u=False-gpu=1/ckpt/checkpoint-step20000.pth')
 
 device = utils.get_device(0)
-ckpt = torch.load('../logs/21_linear_polar_norm_single/20240504-150027-0-0-0-gpu=0/ckpt/checkpoint-step20000.pth', map_location=device)
+ckpt = torch.load(
+    '../logs/21_linear_polar_norm_single/20240504-150027-0-0-0-gpu=0/ckpt/checkpoint-step20000.pth',
+    map_location=device,
+    weights_only=False,
+)
 # ckpt = torch.load('../logs/21_linear_polar_norm_single/20240520-121950-s_fixed=8-positive_v=True-25-w_isometry=4-gpu=0/ckpt/checkpoint-step20000.pth')
 # ckpt = torch.load('../logs/21_linear_polar_norm_single/20240504-162208-s_fixed=10-max_dr_isometry=5-5-gpu=0/ckpt/checkpoint-step20000.pth')
 
