@@ -6,6 +6,11 @@ uv sync
 ```
 とすれば、動くようになっているはず。
 
+結果は以下のコマンドで見ることができる。
+```bash
+uv run tensorboard --logdir=logs
+```
+
 ---
 
 
