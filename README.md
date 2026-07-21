@@ -6,9 +6,11 @@ uv sync
 ```
 とすれば、動くようになっているはず。
 
-学習指標は各実行ディレクトリの `metrics.csv`、モデルパラメータは
-`ckpt/checkpoint-step*.pth` に保存される。チェックポイントはデフォルトで
-500ステップごとに作成される。
+学習指標は各実行ディレクトリの `metrics.csv`、モデルとoptimizerの状態は
+`ckpt/checkpoint-step*.pth` に保存される。設定とNumPy乱数状態は、同じ名前の
+`checkpoint-step*.json` に保存される。チェックポイントはデフォルトで
+500ステップごとに作成される。`.pth` は `torch.load(..., weights_only=True)`
+で読み込める形式になっている。
 
 学習後の可視化は以下のコマンドで生成できる（`RUN_DIR` は実際の実行ディレクトリに置き換える）。
 ```bash
@@ -36,7 +38,7 @@ This paper explores the conformal isometry hypothesis as an explanation for the 
 </div>
 
 ## Requirements
-Requires python >= 3.5. To install dependencies:
+Requires Python 3.12. To install dependencies:
 ```angular2
 pip install -r requirements.txt
 ```

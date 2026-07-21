@@ -32,10 +32,7 @@ def _find_checkpoint(run_dir, step):
 
 
 def _load_checkpoint(path):
-  try:
-    return torch.load(path, map_location='cpu', weights_only=False)
-  except TypeError:  # PyTorch < 2.0 does not have weights_only.
-    return torch.load(path, map_location='cpu')
+  return torch.load(path, map_location='cpu', weights_only=True)
 
 
 def _load_metrics(path):

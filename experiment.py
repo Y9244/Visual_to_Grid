@@ -1,5 +1,6 @@
 """ Main training loop. """
 import csv
+import json
 import os
 import time
 
@@ -75,7 +76,7 @@ class Experiment:
         self.optimizer.zero_grad()
         loss, metrics_step = self.model(batch_data, step) # モデルのメイン部分
         loss.backward()
-        torch.nn.utils.clip_grad_norm(parameters=self.model.parameters(), max_norm=10)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10)
         self.optimizer.step()
 
         # Assumption 4. Non-negativity
@@ -134,12 +135,24 @@ class Experiment:
         'step': step,
         'state_dict': self.model.state_dict(),
         'optimizer': self.optimizer.state_dict(),
-        'config': self.config,
         'torch_rng_state': torch.get_rng_state(),
-        'numpy_rng_state': np.random.get_state(),
     }
     filename = os.path.join(ckpt_dir, 'checkpoint-step{}.pth'.format(step))
     torch.save(state, filename)
+    numpy_rng_state = np.random.get_state()
+    metadata = {
+        'config': self.config.to_dict(),
+        'numpy_rng_state': {
+            'bit_generator': numpy_rng_state[0],
+            'state': numpy_rng_state[1].tolist(),
+            'position': numpy_rng_state[2],
+            'has_gauss': numpy_rng_state[3],
+            'cached_gaussian': numpy_rng_state[4],
+        },
+    }
+    metadata_filename = os.path.splitext(filename)[0] + '.json'
+    with open(metadata_filename, 'w') as metadata_file:
+      json.dump(metadata, metadata_file, indent=2)
     logging.info("Saving checkpoint: {} ...".format(filename))
 
   def _resume_checkpoint(self, resume_path):
@@ -148,22 +161,25 @@ class Experiment:
     :param resume_path: Checkpoint path to be resumed
     """
     resume_path = str(resume_path)
-    self.logger.info("Loading checkpoint: {} ...".format(resume_path))
-    checkpoint = torch.load(resume_path, map_location=self.device)
-    self.start_epoch = checkpoint['epoch'] + 1
+    logging.info('Loading checkpoint: %s ...', resume_path)
+    checkpoint = torch.load(
+        resume_path, map_location=self.device, weights_only=True)
+    metadata_path = os.path.splitext(resume_path)[0] + '.json'
+    with open(metadata_path) as metadata_file:
+      metadata = json.load(metadata_file)
 
-    # load architecture params from checkpoint.
-    if checkpoint['config']['arch'] != self.config['arch']:
-      self.logger.warning("Warning: Architecture configuration given in config file is different from that of "
-                          "checkpoint. This may yield an exception while state_dict is being loaded.")
+    self.start_step = checkpoint['step'] + 1
     self.model.load_state_dict(checkpoint['state_dict'])
+    self.optimizer.load_state_dict(checkpoint['optimizer'])
+    torch.set_rng_state(checkpoint['torch_rng_state'].cpu())
 
-    # load optimizer state from checkpoint only when optimizer type is not changed.
-    if checkpoint['config']['optimizer']['type'] != self.config['optimizer']['type']:
-      self.logger.warning("Warning: Optimizer type given in config file is different from that of checkpoint. "
-                          "Optimizer parameters not being resumed.")
-    else:
-      self.optimizer.load_state_dict(checkpoint['optimizer'])
-
-    self.logger.info(
-        "Checkpoint loaded. Resume training from epoch {}".format(self.start_epoch))
+    numpy_rng_state = metadata['numpy_rng_state']
+    np.random.set_state((
+        numpy_rng_state['bit_generator'],
+        np.asarray(numpy_rng_state['state'], dtype=np.uint32),
+        numpy_rng_state['position'],
+        numpy_rng_state['has_gauss'],
+        numpy_rng_state['cached_gaussian'],
+    ))
+    logging.info('Checkpoint loaded. Resume training from step %d',
+                 self.start_step)

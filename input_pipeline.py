@@ -10,7 +10,8 @@ class TrainDataset:
     self.num_theta = model_config.num_theta # 18
 
     self.num_blocks = model_config.num_neurons // model_config.module_size # 1
-    self.scale_vector = np.zeros(self.num_blocks) + config.max_dr_isometry # 5
+    self.scale_vector = (
+        np.zeros(self.num_blocks, dtype=np.float32) + config.max_dr_isometry)
 
   def __iter__(self):
     while True:
@@ -34,36 +35,52 @@ class TrainDataset:
     if self.num_theta is not None:
       theta_id = np.random.choice( # 0 - 17
           np.arange(self.num_theta), size=(batch_size,))
-      theta = theta_id * 2 * np.pi / self.num_theta
+      theta = (theta_id * 2 * np.pi / self.num_theta).astype(np.float32)
     else:
-      theta = np.random.random(size=(batch_size,)) * 2 * np.pi
+      theta = (
+          np.random.random(size=(batch_size,)).astype(np.float32) *
+          np.float32(2 * np.pi))
     
-    dr = np.sqrt(np.random.random(size=(batch_size,))) * config.max_dr_trans
+    dr = np.sqrt(
+        np.random.random(size=(batch_size,)).astype(np.float32))
+    dr *= np.float32(config.max_dr_trans)
     dx = _dr_theta_to_dx(dr, theta) # [batch_size, 2]
 
     x_max = np.fmin(self.num_grid - 0.5, self.num_grid - 0.5 - dx)
     x_min = np.fmax(-0.5, -0.5 - dx)
-    x = np.random.random(size=(batch_size, 2)) * (x_max - x_min) + x_min
+    x = np.random.random(size=(batch_size, 2)).astype(np.float32)
+    x = x * (x_max - x_min) + x_min
     x_plus_dx = x + dx
 
     # x, x_plus_dx: [batch_size, 2], [batch_size, 2]
-    return {'x': x, 'x_plus_dx': x_plus_dx}
+    return {
+        'x': x.astype(np.float32),
+        'x_plus_dx': x_plus_dx.astype(np.float32),
+    }
 
   def _gen_data_iso_numerical(self):
     batch_size = self.config.batch_size
     config = self.config
 
-    theta = np.random.random(size=(batch_size, 2)) * 2 * np.pi
-    dr = np.sqrt(np.random.random(size=(batch_size, 1))) * config.max_dr_isometry
+    theta = np.random.random(size=(batch_size, 2)).astype(np.float32)
+    theta *= np.float32(2 * np.pi)
+    dr = np.sqrt(
+        np.random.random(size=(batch_size, 1)).astype(np.float32))
+    dr *= np.float32(config.max_dr_isometry)
     dx = _dr_theta_to_dx(dr, theta)  # [N, 2, 2]
 
     x_max = np.fmin(self.num_grid - 0.5, np.min(self.num_grid - 0.5 - dx, axis=1))
     x_min = np.fmax(-0.5, np.max(-0.5 - dx, axis=1))
-    x = np.random.random(size=(batch_size, 2)) * (x_max - x_min) + x_min
+    x = np.random.random(size=(batch_size, 2)).astype(np.float32)
+    x = x * (x_max - x_min) + x_min
     x_plus_dx1 = x + dx[:, 0]
     x_plus_dx2 = x + dx[:, 1]
 
-    return {'x': x, 'x_plus_dx1': x_plus_dx1, 'x_plus_dx2': x_plus_dx2}
+    return {
+        'x': x.astype(np.float32),
+        'x_plus_dx1': x_plus_dx1.astype(np.float32),
+        'x_plus_dx2': x_plus_dx2.astype(np.float32),
+    }
 
 
 def _dr_theta_to_dx(dr, theta):

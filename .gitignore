@@ -1,4 +1,12 @@
 logs*
 
-__pycache__/*
 *.DS_Store
+# Python
+__pycache__/
+*.pyc
+
+# PyCharm
+.idea/
+
+# uv
+.venv/
