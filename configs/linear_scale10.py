@@ -40,7 +40,6 @@ def get_config():
       w_isometry=10.0,
       w_norm=1.0,
       s_fixed=10.0,
-      num_theta=18,
       activation='',
   )
 

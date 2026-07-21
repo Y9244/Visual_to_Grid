@@ -25,6 +25,12 @@ Lossは `losses.png`、`num_act` と `num_async` は
 ノルムの平均と標準偏差は
 `metrics.csv` と `module_norms.png` に出力される。
 
+角度binを使わず、`[cos(theta), sin(theta)]` から移動行列 `B(theta)` を
+MLPで生成する線形モデルは以下で実行できる。
+```bash
+uv run python main.py --config=configs/linear_mlp_scale10.py
+```
+
 ---
 
 

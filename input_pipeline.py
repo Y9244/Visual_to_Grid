@@ -7,7 +7,6 @@ class TrainDataset:
   def __init__(self, config: ml_collections.ConfigDict, model_config: ml_collections.ConfigDict):
     self.config = config # config.data
     self.num_grid = model_config.num_grid # 40
-    self.num_theta = model_config.num_theta # 18
 
     self.num_blocks = model_config.num_neurons // model_config.module_size # 1
     self.scale_vector = (
@@ -32,14 +31,9 @@ class TrainDataset:
     batch_size = self.config.batch_size
     config = self.config
 
-    if self.num_theta is not None:
-      theta_id = np.random.choice( # 0 - 17
-          np.arange(self.num_theta), size=(batch_size,))
-      theta = (theta_id * 2 * np.pi / self.num_theta).astype(np.float32)
-    else:
-      theta = (
-          np.random.random(size=(batch_size,)).astype(np.float32) *
-          np.float32(2 * np.pi))
+    theta = (
+        np.random.random(size=(batch_size,)).astype(np.float32) *
+        np.float32(2 * np.pi))
     
     dr = np.sqrt(
         np.random.random(size=(batch_size,)).astype(np.float32))
