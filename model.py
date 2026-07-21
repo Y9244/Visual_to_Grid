@@ -1,6 +1,5 @@
 """ Representation model of grid cells. """
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import torch
@@ -17,8 +16,10 @@ class GridCellConfig:
   sigma: float
   w_trans: float
   w_isometry: float
+  w_norm: float
   s_fixed: float
-  num_theta: Optional[int] = None
+  trans_hidden_size: int = 128
+  trans_num_hidden_layers: int = 2
 
 
 class GridCell(nn.Module):
@@ -30,22 +31,29 @@ class GridCell(nn.Module):
       self.trans = TransNonlinearPolar(config)
     elif config.trans_type == 'nonlinear_polar_additive':
       self.trans = TransNonlinearPolarAdditive(config)
-    elif config.trans_type == 'linear_polar': 
-      self.trans = TransLinearPolar(config)
+    elif config.trans_type in ('linear_polar', 'linear_polar_mlp'):
+      self.trans = TransLinearPolarMLP(config)
+    else:
+      raise ValueError(f'Unknown trans_type: {config.trans_type}')
 
     self.config = config
 
   def forward(self, data, step):
     loss_trans, num_act, num_async = self._loss_trans(**data['trans'])
     loss_isometry = self._loss_isometry_numerical_scale(**data['isometry'])
-    loss = loss_trans + loss_isometry
+    loss_norm, module_norm_mean, module_norm_std = self._loss_norm(
+        data['trans']['x'])
+    loss = loss_trans + loss_isometry + loss_norm
 
     metrics = {
         'loss_trans': loss_trans,
         'loss_isometry': loss_isometry,
+        'loss_norm': loss_norm,
         'loss': loss,
         'num_act': num_act,
         'num_async': num_async,
+        'module_norm_mean': module_norm_mean,
+        'module_norm_std': module_norm_std,
     }
 
     return loss, metrics
@@ -94,6 +102,22 @@ class GridCell(nn.Module):
     
     return loss * config.w_isometry
 
+  def _loss_norm(self, x):
+    """Penalize module-norm errors at the positions in the current batch."""
+    config = self.config
+    num_modules = config.num_neurons // config.module_size
+    activity = self.encoder(x).reshape(
+        -1, num_modules, config.module_size)
+    module_norm = torch.linalg.vector_norm(activity, dim=-1)
+    target_norm = 1.0 / (num_modules ** 0.5)
+    loss_norm = (
+        torch.mean((module_norm - target_norm) ** 2)
+        * 30000
+        * config.w_norm
+    )
+    detached_norm = module_norm.detach()
+    return loss_norm, detached_norm.mean(), detached_norm.std()
+
 class Encoder(nn.Module):
   def __init__(self, config: GridCellConfig):
     super().__init__()
@@ -131,65 +155,54 @@ def get_grid_code(codebook, x, num_grid):
   return v_x
 
 
-class TransLinearPolar(nn.Module):
-  def __init__(self, config: GridCellConfig):
-    """
-    num_module = 24 // 24 = 1
-    B_params.shape = [18, 1, 24, 24] = [num_theta, 1, C, C]
-    s_fixed.shape = [1]
-    """
-    super().__init__()
-    self.num_module = config.num_neurons // config.module_size # 1
-    self.config = config
+class TransLinearPolarMLP(nn.Module):
+  """Generate the infinitesimal transformation B(theta) with an MLP."""
 
-    self.B_params = nn.Parameter(torch.normal(0, 0.001, size=(config.num_theta, self.num_module, config.module_size, config.module_size)))
-    self.s_fixed = torch.ones(size=(self.num_module,))*config.s_fixed
+  def __init__(self, config: GridCellConfig):
+    super().__init__()
+    self.num_module = config.num_neurons // config.module_size
+    self.module_size = config.module_size
+
+    output_size = self.num_module * self.module_size * self.module_size
+    self.B_mlp = _make_direction_mlp(config, output_size)
+
+    self.s_fixed = torch.ones(size=(self.num_module,)) * config.s_fixed
 
   def forward(self, v, dx):
-    # v: [N, C]
-    # dx: [N, 2]
-    config = self.config
+    # dx is normalized by num_grid before this method is called.
+    direction, dr = _dx_to_direction_dr(dx)
+    B_theta = self.B_mlp(direction).reshape(
+        -1, self.num_module, self.module_size, self.module_size)
 
-    theta_id, dr = self._dx_to_theta_id_dr(dx)
-    B_theta = self.B_params[theta_id] # [N, 1, C, C]
-
-    dr = dr[:, None].repeat(1, self.num_module)# [N, num_modules]
-    dr = dr[:, :, None, None] # [N, 1, 1, 1]
-
-    M = torch.eye(config.module_size).to(v.device)[None, None, ...] + B_theta * dr # -> [N, 1, C, C]
-    v = v.reshape((v.shape[0], -1, config.module_size, 1)) # -> [N, 1, C, 1]
-    v_x_plus_dx = torch.matmul(M, v) # [N, 1, C, 1]
-
-    return v_x_plus_dx.reshape((v.shape[0], -1)) # [N, C]
-
-  def _dx_to_theta_id_dr(self, dx):
-    theta = torch.atan2(dx[:, 1], dx[:, 0]) % (2 * torch.pi)
-    theta_id = torch.round(theta / (2 * torch.pi / self.config.num_theta)).long()
-    dr = torch.sqrt(torch.sum(dx ** 2, axis=-1))
-    # both: [N,]
-    return theta_id, dr
+    identity = torch.eye(
+        self.module_size, device=v.device, dtype=v.dtype)[None, None]
+    M = identity + B_theta * dr[:, None, None, None]
+    v = v.reshape(-1, self.num_module, self.module_size, 1)
+    v_x_plus_dx = torch.matmul(M, v)
+    return v_x_plus_dx.reshape(v.shape[0], -1)
 
 
 class TransNonlinearPolar(nn.Module):
   def __init__(self, config: GridCellConfig):
     super().__init__()
     self.config = config
-    self.num_theta = config.num_theta
     self.num_module = config.num_neurons // config.module_size
 
     self.A = nn.Parameter(torch.rand(size = (config.num_neurons, config.num_neurons)) * 0.002 - 0.001)
-    self.B_params = nn.Parameter(torch.normal(0, 0.001, size=(config.num_theta, self.num_module, config.module_size, config.module_size)))
+    self.B_mlp = _make_direction_mlp(
+        config, self.num_module * config.module_size * config.module_size)
     self.b = nn.Parameter(torch.zeros(size=(self.num_module,)))
 
     self.s_fixed = torch.ones(size=(self.num_module,))*config.s_fixed
 
   def forward(self, v, dx):  # v: [N, C]
     config = self.config
-    theta_id, dr = self._dx_to_theta_id_dr(dx)
+    direction, dr = _dx_to_direction_dr(dx)
 
     A = self.A
     v_shape = v.reshape((v.shape[0], self.num_module, config.module_size, 1)) # [N, num_modules, module_size, 1]
-    B_theta = self.B_params[theta_id] # [N, num_module, module_size, module_size]
+    B_theta = self.B_mlp(direction).reshape(
+        -1, self.num_module, config.module_size, config.module_size)
     Bv = torch.matmul(B_theta, v_shape).squeeze(-1).reshape((v.shape[0], -1)) # [N, C]
     b = torch.repeat_interleave(self.b, config.module_size) # [N, C]
 
@@ -203,32 +216,23 @@ class TransNonlinearPolar(nn.Module):
 
     return v
 
-  def _dx_to_theta_id_dr(self, dx):
-    theta = torch.atan2(dx[:, 1], dx[:, 0]) % (2 * torch.pi)
-    theta_id = torch.round(theta / (2 * torch.pi / self.config.num_theta)).long()
-    dr = torch.sqrt(torch.sum(dx ** 2, axis=-1))
-
-    return theta_id, dr
-
-
 class TransNonlinearPolarAdditive(nn.Module):
   def __init__(self, config: GridCellConfig):
     super().__init__()
     self.config = config
-    self.num_theta = config.num_theta
     self.num_module = config.num_neurons // config.module_size
 
     self.A = nn.Parameter(torch.rand(size = (config.num_neurons, config.num_neurons)) * 0.002 - 0.001)
-    self.B_params = nn.Parameter(torch.rand(size=(config.num_theta, config.num_neurons)) * 0.002 - 0.001) 
+    self.B_mlp = _make_direction_mlp(config, config.num_neurons)
     self.b = nn.Parameter(torch.zeros(size=(config.num_neurons,)))
 
     self.s_fixed = torch.ones(size=(self.num_module,))*config.s_fixed
 
   def forward(self, v, dx):  # v: [N, C]
-    theta_id, dr = self._dx_to_theta_id_dr(dx)
+    direction, dr = _dx_to_direction_dr(dx)
 
     A = self.A
-    B_theta = self.B_params[theta_id] # [N, num_neurons]
+    B_theta = self.B_mlp(direction) # [N, num_neurons]
     b = self.b
 
     activation = nn.ReLU()
@@ -236,9 +240,23 @@ class TransNonlinearPolarAdditive(nn.Module):
 
     return v
 
-  def _dx_to_theta_id_dr(self, dx):
-    theta = torch.atan2(dx[:, 1], dx[:, 0]) % (2 * torch.pi)
-    theta_id = torch.round(theta / (2 * torch.pi / self.config.num_theta)).long()
-    dr = torch.sqrt(torch.sum(dx ** 2, axis=-1))
+def _make_direction_mlp(config, output_size):
+  layers = []
+  input_size = 2
+  for _ in range(config.trans_num_hidden_layers):
+    layers.extend([
+        nn.Linear(input_size, config.trans_hidden_size),
+        nn.Tanh(),
+    ])
+    input_size = config.trans_hidden_size
+  output_layer = nn.Linear(input_size, output_size)
+  nn.init.normal_(output_layer.weight, mean=0.0, std=0.001)
+  nn.init.zeros_(output_layer.bias)
+  layers.append(output_layer)
+  return nn.Sequential(*layers)
 
-    return theta_id, dr
+
+def _dx_to_direction_dr(dx):
+  dr = torch.linalg.vector_norm(dx, dim=-1)
+  direction = dx / dr.clamp_min(torch.finfo(dx.dtype).eps)[:, None]
+  return direction, dr
