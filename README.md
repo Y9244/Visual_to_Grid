@@ -6,10 +6,18 @@ uv sync
 ```
 とすれば、動くようになっているはず。
 
-結果は以下のコマンドで見ることができる。
+学習指標は各実行ディレクトリの `metrics.csv`、モデルパラメータは
+`ckpt/checkpoint-step*.pth` に保存される。チェックポイントはデフォルトで
+500ステップごとに作成される。
+
+学習後の可視化は以下のコマンドで生成できる（`RUN_DIR` は実際の実行ディレクトリに置き換える）。
 ```bash
-uv run tensorboard --logdir=logs
+uv run python visualize_results.py RUN_DIR
 ```
+
+特定のチェックポイントを可視化する場合は `--step 5000` のように指定する。
+Lossは `losses.png`、`num_act` と `num_async` は
+`activity_metrics.png` に分けて出力される。
 
 ---
 
@@ -52,4 +60,3 @@ python main.py --config=configs/nonlinear1_relu.py
 python main.py --config=configs/nonlinear2_additive.py
 ```
 In `configs` folder, we also provide the configurations for training linear models with different scales, and nonlinear model with different activation functions. 
-

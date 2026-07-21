@@ -1,12 +1,11 @@
 """ Main training loop. """
+import csv
 import os
+import time
 
 from absl import logging
-from clu import metric_writers
-from clu import periodic_actions
 import ml_collections
 import numpy as np
-import tensorflow as tf
 import torch
 import torch.nn as nn
 
@@ -38,25 +37,26 @@ class Experiment:
   def train_and_evaluate(self, workdir):
     logging.info('==== Experiment.train_and_evaluate() ===')
 
-    if not tf.io.gfile.exists(workdir):
-      tf.io.gfile.mkdir(workdir)
+    os.makedirs(workdir, exist_ok=True)
     config = self.config.train
     logging.info('num_steps_train=%d', config.num_steps_train)
-
-    writer = metric_writers.create_default_writer(workdir)
-
-    hooks = []
-    report_progress = periodic_actions.ReportProgress(
-        num_train_steps=config.num_steps_train, writer=writer)
-    hooks += [report_progress]
 
     train_metrics = []
     module_size = self.model_config.module_size
     num_grid = self.model_config.num_grid
     num_module = self.model_config.num_neurons // module_size
+    ckpt_dir = os.path.join(workdir, 'ckpt')
+    os.makedirs(ckpt_dir, exist_ok=True)
+    metrics_path = os.path.join(workdir, 'metrics.csv')
+    metric_names = ['loss', 'loss_trans', 'loss_isometry', 'num_act', 'num_async']
+    start_time = time.monotonic()
 
     logging.info('==== Start of training ====')
-    with metric_writers.ensure_flushes(writer):
+    with open(metrics_path, 'w', newline='') as metrics_file:
+      csv_writer = csv.DictWriter(
+          metrics_file, fieldnames=['step', *metric_names])
+      csv_writer.writeheader()
+
       for step in range(1, config.num_steps_train+1):
         batch_data = utils.dict_to_device(next(self.train_iter), self.device)
 
@@ -98,31 +98,29 @@ class Experiment:
         # Quick indication that training is happening.
         logging.log_first_n(
             logging.WARNING, 'Finished training step %d.', 3, step)
-        for h in hooks:
-          h(step)
 
-        if step % config.steps_per_logging == 0 or step == 1:
+        if (step % config.steps_per_logging == 0 or
+            step == config.num_steps_train):
           train_metrics = utils.average_appended_metrics(train_metrics)
-          writer.write_scalars(step, train_metrics)
+          row = {'step': step}
+          row.update({name: float(train_metrics[name]) for name in metric_names})
+          csv_writer.writerow(row)
+          metrics_file.flush()
+          logging.info(
+              'step=%d/%d loss=%.6f loss_trans=%.6f loss_isometry=%.6f',
+              step, config.num_steps_train, row['loss'], row['loss_trans'],
+              row['loss_isometry'])
           train_metrics = []
 
         if step % config.steps_per_large_logging == 0:
-          # visualize v and heatmaps.
-          with torch.no_grad():
-            def visualize(weights, name):
-              weights = weights.data.cpu().detach().numpy()
-              weights = weights.reshape((-1, module_size, num_grid, num_grid))[:10, :10] # -> [1, 10, 40, 40]
-              writer.write_images(step, {name: utils.draw_heatmap(weights)})
-
-            # self.model.encoder.v: [24, 40, 40]
-            visualize(self.model.encoder.v, 'v') # エラー箇所
-
-        if step == config.num_steps_train:
-          ckpt_dir = os.path.join(workdir, 'ckpt')
-          if not tf.io.gfile.exists(ckpt_dir):
-            tf.io.gfile.makedirs(ckpt_dir)
           self._save_checkpoint(step, ckpt_dir)
-          
+
+      if config.num_steps_train % config.steps_per_large_logging != 0:
+        self._save_checkpoint(config.num_steps_train, ckpt_dir)
+
+    logging.info('Training finished in %.1f seconds. Metrics: %s',
+                 time.monotonic() - start_time, metrics_path)
+
   def _save_checkpoint(self, step, ckpt_dir):
     """
     Saving checkpoints
@@ -136,7 +134,9 @@ class Experiment:
         'step': step,
         'state_dict': self.model.state_dict(),
         'optimizer': self.optimizer.state_dict(),
-        'config': self.config
+        'config': self.config,
+        'torch_rng_state': torch.get_rng_state(),
+        'numpy_rng_state': np.random.get_state(),
     }
     filename = os.path.join(ckpt_dir, 'checkpoint-step{}.pth'.format(step))
     torch.save(state, filename)

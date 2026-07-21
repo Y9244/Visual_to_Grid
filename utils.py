@@ -1,11 +1,8 @@
 import os
-from pprint import pformat
-from typing import Mapping, Any
 
 from absl import logging
 import numpy as np
 from matplotlib import pyplot as plt
-import tensorflow as tf
 from scipy.stats import norm
 import sys
 import cv2
@@ -16,15 +13,6 @@ import time
 import torch
 # if '/opt/ros/kinetic/lib/python2.7/dist-packages' in sys.path:
 #     sys.path.remove('/opt/ros/kinetic/lib/python2.7/dist-packages')
-
-from clu import metric_writers
-from clu.metric_writers.async_writer import AsyncMultiWriter
-from clu.metric_writers.async_writer import AsyncWriter
-from clu.metric_writers.logging_writer import LoggingWriter
-from clu.metric_writers.summary_writer import SummaryWriter
-from clu.metric_writers.interface import MetricWriter
-from clu.metric_writers.multi_writer import MultiWriter
-
 
 def draw_trajs(real_trajs, pred_trajs, area_size: int):
   # real_trajs: [N, T, 2], pred_trajs: [N, T, 2]
@@ -177,56 +165,6 @@ def set_gpu(gpu, deterministic=True):
     else:
       torch.backends.cudnn.benchmark = False
       torch.backends.cudnn.deterministic = True
-
-
-def create_saver_and_resore(sess, restore=False, workdir=None, ckpt=None):
-  saver = tf.train.Saver(max_to_keep=5)
-  sess.run(tf.global_variables_initializer())
-
-  if restore:
-    assert workdir is not None, "to restore a ckpt, a workdir is required"
-    if ckpt is None:
-      saver.restore(sess, tf.train.latest_checkpoint(workdir))
-    else:
-      saver.restore(sess, os.path.join(workdir, ckpt))
-
-  return saver
-
-
-""" Custom logging that is command-line friendly """
-
-
-def create_custom_writer(logdir: str, process_index: int = 0,
-                         asynchronous=True) -> MetricWriter:
-  """Adapted from clu.metric_writers.__init__"""
-  if process_index > 0:
-    if asynchronous:
-      return AsyncWriter(CustomLoggingWriter())
-    else:
-      return CustomLoggingWriter()
-  writers = [CustomLoggingWriter(), SummaryWriter(logdir)]
-  if asynchronous:
-    return AsyncMultiWriter(writers)
-  return MultiWriter(writers)
-
-
-class CustomLoggingWriter(LoggingWriter):
-  def write_scalars(self, step: int, scalars: Mapping[str, metric_writers.interface.Scalar]):
-    keys = sorted(scalars.keys())
-    if step == 1:
-      logging.info("%s", ", ".join(["Step"]+keys))
-    values = [scalars[key] for key in keys]
-    # Convert jax DeviceArrays and numpy ndarrays to python native type
-    values = [np.array(v).item() for v in values]
-    # Print floats
-    values = [f"{v:.4f}" if isinstance(v, float) else f"{v}" for v in values]
-    logging.info("%d, %s", step, ", ".join(values))
-
-  def write_texts(self, step: int, texts: Mapping[str, str]):
-    logging.info("[%d] Got texts: %s.", step, texts)
-
-  def write_hparams(self, hparams: Mapping[str, Any]):
-    logging.info("Hyperparameters:\n%s", pformat(hparams))
 
 
 """ Run with temporary verbosity """
@@ -493,77 +431,3 @@ def get_argv():
       argv.pop(i)
       break
   return ''.join(argv[1:])
-
-
-def visualize(model, sess, test_dir, epoch=0, final_epoch=False, result_dir=None):
-  weights_v_value = sess.run(model.v)
-  if not tf.gfile.Exists(test_dir):
-    tf.gfile.MakeDirs(test_dir)
-  np.save(os.path.join(test_dir, 'weights_%04d.npy' % epoch), weights_v_value)
-
-  # print out v
-  weights_v_value_transform = np.swapaxes(
-      np.swapaxes(weights_v_value, 0, 2), 1, 2)
-  nrow = max(model.num_group, 12)
-  ncol = int(np.ceil(model.grid_cell_dim / float(nrow)))
-  plt.figure(figsize=(ncol, nrow))
-  for i in range(len(weights_v_value_transform)):
-    weight_to_draw = weights_v_value_transform[i]
-    plt.subplot(nrow, ncol, i + 1)
-    draw_heatmap_2D(weight_to_draw)
-  plt.savefig(os.path.join(test_dir, 'weights_%04d.png' %
-              epoch), bbox_inches='tight')
-  if final_epoch:
-    if not os.path.exists(result_dir):
-      os.makedirs(result_dir)
-    file_name = os.path.splitext(os.path.basename(__file__))[0]
-    if len(sys.argv) > 1:
-      file_name = ''.join([file_name] + sys.argv[1:])
-    plt.savefig(os.path.join(result_dir, file_name + '.png'),
-                bbox_inches='tight')
-  plt.close()
-
-
-def visualize_u(model, sess, test_dir, epoch=0, final_epoch=False, result_dir=None):
-  weights_u_value = sess.run(model.u)[0]
-  if not tf.gfile.Exists(test_dir):
-    tf.gfile.MakeDirs(test_dir)
-  np.save(os.path.join(test_dir, 'weightsu_%04d.npy' % epoch), weights_u_value)
-
-  # print out u
-  weights_u_value_transform = np.swapaxes(
-      np.swapaxes(weights_u_value, 0, 2), 1, 2)
-  nrow = max(model.num_group, 12)
-  ncol = int(np.ceil(model.grid_cell_dim / float(nrow)))
-  plt.figure(figsize=(ncol, nrow))
-  for i in range(len(weights_u_value_transform)):
-    weight_to_draw = weights_u_value_transform[i]
-    plt.subplot(nrow, ncol, i + 1)
-    draw_heatmap_2D(weight_to_draw)
-  plt.savefig(os.path.join(test_dir, 'weightsu_%04d.png' %
-              epoch), bbox_inches='tight')
-  if final_epoch:
-    if not os.path.exists(result_dir):
-      os.makedirs(result_dir)
-    file_name = os.path.splitext(os.path.basename(__file__))[0]
-    if len(sys.argv) > 1:
-      file_name = ''.join([file_name] + sys.argv[1:])
-    plt.savefig(os.path.join(result_dir, file_name + '.png'))
-  plt.close()
-
-
-def visualize_B(model, sess, test_dir, epoch=0):
-  B_value = sess.run(model.B)
-
-  # print out u
-  B_value = np.transpose(B_value, [1, 2, 3, 0])
-  for k in range(model.num_group):
-    B_bk = B_value[k]
-    B_bk = np.reshape(B_bk, [model.block_size ** 2, -1])
-    plt.figure(figsize=(model.block_size*2, model.block_size*2))
-    for i in range(len(B_bk)):
-      plt.subplot(model.block_size, model.block_size, i + 1)
-      plt.plot(np.linspace(0, 2 * math.pi, len(B_bk[i])), B_bk[i])
-    plt.savefig(os.path.join(test_dir, 'B_bk%02d.png' %
-                k), bbox_inches='tight')
-    plt.close()

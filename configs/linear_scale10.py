@@ -13,7 +13,7 @@ def get_config():
 
   # training config
   config.train = d(
-      num_steps_train=20000,
+      num_steps_train=10000,
       lr=0.003,
       steps_per_logging=20,
       steps_per_large_logging=500,
