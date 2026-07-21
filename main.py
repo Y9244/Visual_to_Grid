@@ -14,7 +14,6 @@ config_flags.DEFINE_config_file(
     "config", None, "Training configuration.", lock_config=True)
 flags.DEFINE_string("workdir", "./logs", "Work unit directory.")
 flags.mark_flags_as_required(["config"])
-flags.DEFINE_string("mode", 'train', "train / visualize / integration / correction")
 
 
 def main(argv):
@@ -23,11 +22,7 @@ def main(argv):
 
   np.random.seed(0)
 
-  # config workdir
-  if FLAGS.mode == "train":
-    workdir = os.path.join(FLAGS.workdir, utils.get_workdir())
-  else:
-    workdir = os.path.join(FLAGS.workdir, "eval")
+  workdir = os.path.join(FLAGS.workdir, utils.get_workdir())
   os.makedirs(workdir, exist_ok=True)
 
   # record config file
@@ -36,9 +31,8 @@ def main(argv):
 
   device = utils.get_device(config.gpu)
 
-  if FLAGS.mode == "train":  # training
-    exp = experiment.Experiment(config, device)
-    exp.train_and_evaluate(workdir)
+  exp = experiment.Experiment(config, device)
+  exp.train_and_evaluate(workdir)
 
 
 if __name__ == '__main__':

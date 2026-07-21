@@ -138,7 +138,7 @@ def main():
   run_dir = args.run_dir.resolve()
   checkpoint_path = _find_checkpoint(run_dir, args.step)
   checkpoint = _load_checkpoint(checkpoint_path)
-  activity, _ = reconstruct_encoder_activity(
+  activity = reconstruct_encoder_activity(
       checkpoint_path, checkpoint['state_dict'])
   step = int(checkpoint['step'])
   output_dir = (args.output_dir or

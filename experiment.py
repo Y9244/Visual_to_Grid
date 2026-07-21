@@ -48,7 +48,6 @@ class Experiment:
     metric_names = [
         'loss', 'loss_trans', 'loss_isometry', 'loss_norm',
         'num_act', 'num_async', 'module_norm_mean', 'module_norm_std',
-        'isometry_direction_variance',
     ]
     start_time = time.monotonic()
 
@@ -74,16 +73,11 @@ class Experiment:
           param_group['lr'] = lr
 
         self.optimizer.zero_grad()
-        loss, metrics_step = self.model(batch_data, step) # モデルのメイン部分
+        loss, metrics_step = self.model(batch_data)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10)
         self.optimizer.step()
 
-        # Assumption 4. Non-negativity
-        if config.positive_v and hasattr(self.model.encoder, 'v'):
-          with torch.no_grad():
-            self.model.encoder.v.clamp_(min=0.)
-  
         metrics_step = utils.dict_to_numpy(metrics_step)
         train_metrics.append(metrics_step)
 
@@ -115,12 +109,7 @@ class Experiment:
                  time.monotonic() - start_time, metrics_path)
 
   def _save_checkpoint(self, step, ckpt_dir):
-    """
-    Saving checkpoints
-    :param epoch: current epoch number
-    :param log: logging information of the epoch
-    :param save_best: if True, rename the saved checkpoint to 'model_best.pth'
-    """
+    """Save tensor state and JSON metadata separately."""
     arch = type(self.model).__name__
     state = {
         'arch': arch,
@@ -146,32 +135,3 @@ class Experiment:
     with open(metadata_filename, 'w') as metadata_file:
       json.dump(metadata, metadata_file, indent=2)
     logging.info("Saving checkpoint: {} ...".format(filename))
-
-  def _resume_checkpoint(self, resume_path):
-    """
-    Resume from saved checkpoints
-    :param resume_path: Checkpoint path to be resumed
-    """
-    resume_path = str(resume_path)
-    logging.info('Loading checkpoint: %s ...', resume_path)
-    checkpoint = torch.load(
-        resume_path, map_location=self.device, weights_only=True)
-    metadata_path = os.path.splitext(resume_path)[0] + '.json'
-    with open(metadata_path) as metadata_file:
-      metadata = json.load(metadata_file)
-
-    self.start_step = checkpoint['step'] + 1
-    self.model.load_state_dict(checkpoint['state_dict'])
-    self.optimizer.load_state_dict(checkpoint['optimizer'])
-    torch.set_rng_state(checkpoint['torch_rng_state'].cpu())
-
-    numpy_rng_state = metadata['numpy_rng_state']
-    np.random.set_state((
-        numpy_rng_state['bit_generator'],
-        np.asarray(numpy_rng_state['state'], dtype=np.uint32),
-        numpy_rng_state['position'],
-        numpy_rng_state['has_gauss'],
-        numpy_rng_state['cached_gaussian'],
-    ))
-    logging.info('Checkpoint loaded. Resume training from step %d',
-                 self.start_step)
