@@ -73,16 +73,16 @@ class Experiment:
           param_group['lr'] = lr
 
         self.optimizer.zero_grad()
-        loss, metrics_step = self.model(batch_data, step)
+        loss, metrics_step = self.model(batch_data, step) # モデルのメイン部分
         loss.backward()
         torch.nn.utils.clip_grad_norm(parameters=self.model.parameters(), max_norm=10)
         self.optimizer.step()
 
-        # postive v
+        # Assumption 4. Non-negativity
         if config.positive_v:
           self.model.encoder.v.data = self.model.encoder.v.data.clamp(min=0.)
 
-        # normalize v
+        # Assumption 3. Normalization
         if config.norm_v:
           with torch.no_grad():
             v = self.model.encoder.v.data.reshape(
@@ -111,11 +111,11 @@ class Experiment:
           with torch.no_grad():
             def visualize(weights, name):
               weights = weights.data.cpu().detach().numpy()
-              weights = weights.reshape(
-                  (-1, module_size, num_grid, num_grid))[:10, :10]
+              weights = weights.reshape((-1, module_size, num_grid, num_grid))[:10, :10] # -> [1, 10, 40, 40]
               writer.write_images(step, {name: utils.draw_heatmap(weights)})
 
-            visualize(self.model.encoder.v, 'v')
+            # self.model.encoder.v: [24, 40, 40]
+            visualize(self.model.encoder.v, 'v') # エラー箇所
 
         if step == config.num_steps_train:
           ckpt_dir = os.path.join(workdir, 'ckpt')
@@ -149,7 +149,7 @@ class Experiment:
     """
     resume_path = str(resume_path)
     self.logger.info("Loading checkpoint: {} ...".format(resume_path))
-    checkpoint = torch.load(resume_path)
+    checkpoint = torch.load(resume_path, map_location=self.device)
     self.start_epoch = checkpoint['epoch'] + 1
 
     # load architecture params from checkpoint.

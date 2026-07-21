@@ -68,7 +68,8 @@ def _draw_real_pred_pairs(real, pred, area_size: int):
 
 def draw_heatmap(weights):  
   # weights should a 4-D tensor: [M, N, H, W]
-  nrow, ncol = weights.shape[0], weights.shape[1]
+  # weights: [1, 10, 40, 40]
+  nrow, ncol = weights.shape[0], weights.shape[1] # 1, 10
   fig = plt.figure(figsize=(ncol, nrow))
 
   for i in range(nrow):
@@ -84,13 +85,11 @@ def draw_heatmap(weights):
       plt.axis('off')
 
   fig.canvas.draw()
-  image_from_plot = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-  image_from_plot = image_from_plot.reshape(
-      fig.canvas.get_width_height()[::-1] + (3,))
-  # plt.show()
+  image, (width, height) = fig.canvas.print_to_buffer()
+  image = np.frombuffer(image, dtype=np.uint8).reshape((height, width, 4))[..., :3]
   plt.close(fig)
 
-  return np.expand_dims(image_from_plot, axis=0)
+  return np.expand_dims(image, axis=0)
 
 
 def save_heatmap(weights, name):  
@@ -147,8 +146,26 @@ def dict_to_device(data, device):
   return data
 
 
-def get_device(device):
-    return 'cuda:{}'.format(device) if torch.cuda.is_available() else 'cpu'
+def _can_use_torch_device(device):
+  try:
+    torch.empty(1, device=device)
+    return True
+  except Exception:
+    return False
+
+
+def get_device(device=0):
+  if torch.cuda.is_available():
+    cuda_device = torch.device('cuda:{}'.format(device))
+    if _can_use_torch_device(cuda_device):
+      return cuda_device
+
+  if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+    mps_device = torch.device('mps')
+    if _can_use_torch_device(mps_device):
+      return mps_device
+
+  return torch.device('cpu')
 
 
 def set_gpu(gpu, deterministic=True):
