@@ -8,7 +8,6 @@ from absl import logging
 import ml_collections
 import numpy as np
 import torch
-import torch.nn as nn
 
 import input_pipeline
 import model as model
@@ -43,13 +42,13 @@ class Experiment:
     logging.info('num_steps_train=%d', config.num_steps_train)
 
     train_metrics = []
-    module_size = self.model_config.module_size
-    num_grid = self.model_config.num_grid
-    num_module = self.model_config.num_neurons // module_size
     ckpt_dir = os.path.join(workdir, 'ckpt')
     os.makedirs(ckpt_dir, exist_ok=True)
     metrics_path = os.path.join(workdir, 'metrics.csv')
-    metric_names = ['loss', 'loss_trans', 'loss_isometry', 'num_act', 'num_async']
+    metric_names = [
+        'loss', 'loss_trans', 'loss_isometry', 'loss_norm',
+        'num_act', 'num_async', 'module_norm_mean', 'module_norm_std',
+    ]
     start_time = time.monotonic()
 
     logging.info('==== Start of training ====')
@@ -81,17 +80,8 @@ class Experiment:
 
         # Assumption 4. Non-negativity
         if config.positive_v:
-          self.model.encoder.v.data = self.model.encoder.v.data.clamp(min=0.)
-
-        # Assumption 3. Normalization
-        if config.norm_v:
           with torch.no_grad():
-            v = self.model.encoder.v.data.reshape(
-                (-1, module_size, num_grid, num_grid))
-
-            v_normed = nn.functional.normalize(v, dim=1) / np.sqrt(num_module)
-            self.model.encoder.v.data = v_normed.reshape(
-                (-1, num_grid, num_grid))
+            self.model.encoder.v.clamp_(min=0.)
   
         metrics_step = utils.dict_to_numpy(metrics_step)
         train_metrics.append(metrics_step)
@@ -108,9 +98,10 @@ class Experiment:
           csv_writer.writerow(row)
           metrics_file.flush()
           logging.info(
-              'step=%d/%d loss=%.6f loss_trans=%.6f loss_isometry=%.6f',
+              'step=%d/%d loss=%.6f loss_trans=%.6f '
+              'loss_isometry=%.6f loss_norm=%.6f module_norm=%.6f',
               step, config.num_steps_train, row['loss'], row['loss_trans'],
-              row['loss_isometry'])
+              row['loss_isometry'], row['loss_norm'], row['module_norm_mean'])
           train_metrics = []
 
         if step % config.steps_per_large_logging == 0:

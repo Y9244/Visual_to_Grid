@@ -20,6 +20,10 @@ uv run python visualize_results.py RUN_DIR
 特定のチェックポイントを可視化する場合は `--step 5000` のように指定する。
 Lossは `losses.png`、`num_act` と `num_async` は
 `activity_metrics.png` に分けて出力される。
+この実験ブランチでは活動テーブルを更新後に直接L2正規化せず、各ステップで
+サンプリングされた位置のモジュールノルム誤差を `loss_norm` として最適化する。
+ノルムの平均と標準偏差は
+`metrics.csv` と `module_norms.png` に出力される。
 
 ---
 

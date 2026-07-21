@@ -48,7 +48,7 @@ def plot_metrics(metrics_path, output_dir):
   metrics = _load_metrics(metrics_path)
 
   fig, axis = plt.subplots(figsize=(7, 4.5))
-  for name in ('loss', 'loss_trans', 'loss_isometry'):
+  for name in ('loss', 'loss_trans', 'loss_isometry', 'loss_norm'):
     axis.plot(metrics['step'], metrics[name], label=name)
   axis.set(xlabel='step', ylabel='loss', title='Training losses')
   axis.legend()
@@ -65,6 +65,18 @@ def plot_metrics(metrics_path, output_dir):
   axis.grid(alpha=0.25)
   fig.tight_layout()
   fig.savefig(output_dir / 'activity_metrics.png', dpi=160)
+  plt.close(fig)
+
+  fig, axis = plt.subplots(figsize=(7, 4.5))
+  for name in ('module_norm_mean', 'module_norm_std'):
+    axis.plot(metrics['step'], metrics[name], label=name)
+  axis.axhline(1.0, color='black', linestyle='--', alpha=0.5,
+               label='target norm (one module)')
+  axis.set(xlabel='step', ylabel='norm', title='Module norm diagnostics')
+  axis.legend()
+  axis.grid(alpha=0.25)
+  fig.tight_layout()
+  fig.savefig(output_dir / 'module_norms.png', dpi=160)
   plt.close(fig)
 
 

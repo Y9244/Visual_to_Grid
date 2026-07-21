@@ -18,7 +18,6 @@ def get_config():
       steps_per_logging=20,
       steps_per_large_logging=500,
       steps_per_integration=2000,
-      norm_v=True,
       positive_v=True,
   )
 
@@ -39,6 +38,7 @@ def get_config():
       sigma=0.07,
       w_trans=1.0,
       w_isometry=10.0,
+      w_norm=1.0,
       s_fixed=10.0,
       num_theta=18,
       activation='',

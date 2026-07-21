@@ -17,6 +17,7 @@ class GridCellConfig:
   sigma: float
   w_trans: float
   w_isometry: float
+  w_norm: float
   s_fixed: float
   num_theta: Optional[int] = None
 
@@ -38,14 +39,19 @@ class GridCell(nn.Module):
   def forward(self, data, step):
     loss_trans, num_act, num_async = self._loss_trans(**data['trans'])
     loss_isometry = self._loss_isometry_numerical_scale(**data['isometry'])
-    loss = loss_trans + loss_isometry
+    loss_norm, module_norm_mean, module_norm_std = self._loss_norm(
+        data['trans']['x'])
+    loss = loss_trans + loss_isometry + loss_norm
 
     metrics = {
         'loss_trans': loss_trans,
         'loss_isometry': loss_isometry,
+        'loss_norm': loss_norm,
         'loss': loss,
         'num_act': num_act,
         'num_async': num_async,
+        'module_norm_mean': module_norm_mean,
+        'module_norm_std': module_norm_std,
     }
 
     return loss, metrics
@@ -93,6 +99,22 @@ class GridCell(nn.Module):
       loss += torch.sum((sum_square_norm - scale * dx_norm) ** 2)
     
     return loss * config.w_isometry
+
+  def _loss_norm(self, x):
+    """Penalize module-norm errors at the positions in the current batch."""
+    config = self.config
+    num_modules = config.num_neurons // config.module_size
+    activity = self.encoder(x).reshape(
+        -1, num_modules, config.module_size)
+    module_norm = torch.linalg.vector_norm(activity, dim=-1)
+    target_norm = 1.0 / (num_modules ** 0.5)
+    loss_norm = (
+        torch.mean((module_norm - target_norm) ** 2)
+        * 30000
+        * config.w_norm
+    )
+    detached_norm = module_norm.detach()
+    return loss_norm, detached_norm.mean(), detached_norm.std()
 
 class Encoder(nn.Module):
   def __init__(self, config: GridCellConfig):
