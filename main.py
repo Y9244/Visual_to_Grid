@@ -4,7 +4,6 @@ import os
 from absl import app
 from absl import flags
 from ml_collections import config_flags
-import numpy as np
 
 import experiment
 import utils
@@ -20,7 +19,7 @@ def main(argv):
   del argv
   config = FLAGS.config
 
-  np.random.seed(0)
+  utils.set_random_seed(config.seed)
 
   workdir = os.path.join(FLAGS.workdir, utils.get_workdir())
   os.makedirs(workdir, exist_ok=True)

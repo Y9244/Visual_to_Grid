@@ -12,13 +12,14 @@ learns hexagonal grid-cell activity:
 - a direction-conditioned MLP that generates the transformation matrix from
   `[cos(theta), sin(theta)]`;
 - one random movement direction per sample;
-- a fixed isometry displacement of `dr = 5`;
-- a squared-distance isometry loss;
+- one shared movement sample for the transformation and isometry losses;
+- a configurable fixed or uniform movement-distance distribution;
+- an isometry loss that directly compares Euclidean activity distances;
 - a loss-based activity norm constraint.
 
-Legacy table encoders, ordinary MLP encoders, angle bins, variable-distance
-isometry losses, and multi-direction experiment branches have been removed so
-that the training path is explicit in the code.
+Legacy table encoders, ordinary MLP encoders, angle bins, separate
+loss-specific movement samples, and multi-direction experiment branches have
+been removed so that the training path is explicit in the code.
 
 ## Setup
 
@@ -34,15 +35,39 @@ Run the supported configuration with:
 
 ```bash
 uv run python main.py \
-  --config=configs/siren_scale10.py \
+  --config=configs/siren.py \
   --workdir=./logs
 ```
+
+Set `seed` in the config, or override it with `--config.seed=1`, to control
+both NumPy movement sampling and PyTorch model initialization. Runs with the
+same seed and deterministic backend operations reproduce the same random
+sequence and usually the same grid orientation.
 
 Each invocation creates a timestamped run directory under `logs`. Training
 metrics are written to `metrics.csv`. PyTorch checkpoints are written every
 500 steps to `ckpt/checkpoint-step*.pth`; their configuration and NumPy random
 state are stored in the matching JSON files. The `.pth` files can be loaded
 with `torch.load(..., weights_only=True)`.
+
+Training runs for 20,000 steps. The learning rate warms up to `0.003` over
+500 steps, remains there through step 12,000, and then follows cosine decay to
+`0.0001`. The learning rate is included in `metrics.csv`.
+
+`data.movement_dr` is the representative movement distance. In uniform mode,
+samples are drawn from `movement_dr ± movement_dr_half_width`; fixed mode uses
+exactly `movement_dr`. The model automatically sets
+
+```text
+s_fixed = target_activity_distance * environment_size / movement_dr
+```
+
+so that the target activity distance at the representative movement remains
+`target_activity_distance`. Empirically in this model, larger
+`movement_dr` selects a longer spatial period (wider grid spacing), while
+smaller `movement_dr` selects a shorter period (narrower grid spacing). This is
+an empirical property of the finite-displacement objective, not a guarantee
+that the lattice remains hexagonal for every setting.
 
 ## Visualization
 
