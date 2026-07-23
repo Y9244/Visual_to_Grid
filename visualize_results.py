@@ -44,6 +44,8 @@ def _load_model_config(checkpoint_path):
   metadata_path = checkpoint_path.with_suffix('.json')
   with metadata_path.open() as metadata_file:
     saved_config = json.load(metadata_file)['config']['model']
+  if 'environment_size' not in saved_config and 'num_grid' in saved_config:
+    saved_config['environment_size'] = saved_config.pop('num_grid')
   saved_config.setdefault('trans_hidden_size', 128)
   saved_config.setdefault('trans_num_hidden_layers', 2)
   supported_fields = {
@@ -127,7 +129,8 @@ def reconstruct_encoder_activity(checkpoint_path, state_dict):
   grid_cell.load_state_dict(state_dict)
   grid_cell.eval()
   resolution = 100
-  coordinate = torch.linspace(0, model_config.num_grid - 1, resolution)
+  coordinate = torch.linspace(
+      0, model_config.environment_size - 1, resolution)
   x, y = torch.meshgrid(coordinate, coordinate, indexing='xy')
   positions = torch.stack((x.reshape(-1), y.reshape(-1)), dim=-1)
   with torch.no_grad():

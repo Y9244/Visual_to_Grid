@@ -8,6 +8,12 @@ from scipy.stats import norm
 import torch
 
 
+def set_random_seed(seed):
+  """Seed training-data sampling and model initialization."""
+  np.random.seed(seed)
+  torch.manual_seed(seed)
+
+
 def average_appended_metrics(metrics):
   keys = metrics[0].keys()
   return {

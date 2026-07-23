@@ -9,7 +9,7 @@ from torch import nn
 
 @dataclass
 class GridCellConfig:
-  num_grid: int
+  environment_size: int
   num_neurons: int
   module_size: int
   w_trans: float
@@ -33,10 +33,11 @@ class GridCell(nn.Module):
     self.trans = TransformationMLP(config)
 
   def forward(self, data):
-    loss_trans, num_act, num_async = self._loss_trans(**data['trans'])
-    loss_isometry = self._loss_isometry(**data['isometry'])
+    movement = data['movement']
+    loss_trans, num_act, num_async = self._loss_trans(**movement)
+    loss_isometry = self._loss_isometry(**movement)
     loss_norm, module_norm_mean, module_norm_std = self._loss_norm(
-        data['trans']['x'])
+        movement['x'])
     loss = loss_trans + loss_isometry + loss_norm
     metrics = {
         'loss': loss,
@@ -54,7 +55,7 @@ class GridCell(nn.Module):
     config = self.config
     v_x = self.encoder(x)
     v_x_plus_dx = self.encoder(x_plus_dx)
-    dx = (x_plus_dx - x) / config.num_grid
+    dx = (x_plus_dx - x) / config.environment_size
     prediction_error = self.trans(v_x, dx) - v_x_plus_dx
     loss = torch.mean(torch.sum(prediction_error ** 2, dim=1)) * 30000
 
@@ -66,21 +67,21 @@ class GridCell(nn.Module):
     return loss * config.w_trans, num_act, num_async
 
   def _loss_isometry(self, x, x_plus_dx):
-    """Squared-distance error for one fixed-distance random direction."""
+    """Euclidean-distance error for one fixed-distance random direction."""
     config = self.config
     batch_size = x.shape[0]
     num_modules = config.num_neurons // config.module_size
-    dx = (x_plus_dx - x) / config.num_grid
+    dx = (x_plus_dx - x) / config.environment_size
     dx_norm = torch.linalg.vector_norm(dx, dim=-1)
 
     v_x = self.encoder(x).reshape(
         batch_size, num_modules, config.module_size)
     v_x_plus_dx = self.encoder(x_plus_dx).reshape(
         batch_size, num_modules, config.module_size)
-    distance_squared = torch.sum((v_x_plus_dx - v_x) ** 2, dim=-1)
+    distance = torch.linalg.vector_norm(v_x_plus_dx - v_x, dim=-1)
     scale = self.trans.s_fixed[None, :]
-    target_distance_squared = (scale * dx_norm[:, None]) ** 2
-    deviation = distance_squared - target_distance_squared
+    target_distance = scale * dx_norm[:, None]
+    deviation = distance - target_distance
     return torch.sum(deviation ** 2) * config.w_isometry
 
   def _loss_norm(self, x):
@@ -123,7 +124,7 @@ class SirenEncoder(nn.Module):
 
   def __init__(self, config: GridCellConfig):
     super().__init__()
-    self.num_grid = config.num_grid
+    self.environment_size = config.environment_size
     self.softplus_beta = config.encoder_softplus_beta
 
     layers = [SineLayer(
@@ -145,7 +146,8 @@ class SirenEncoder(nn.Module):
     nn.init.constant_(self.output.bias, output_bias)
 
   def forward(self, x):
-    x_normalized = (x + 0.5) / self.num_grid * 2.0 - 1.0
+    x_normalized = (
+        (x + 0.5) / self.environment_size * 2.0 - 1.0)
     pre_activity = self.output(self.siren(x_normalized))
     return nn.functional.softplus(
         pre_activity, beta=self.softplus_beta)
